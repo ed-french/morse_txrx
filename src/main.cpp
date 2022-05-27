@@ -3,6 +3,8 @@
 #include <WiFiUdp.h>
 #include "credentials.h"
 #include <AsyncUDP.h>
+#include "driver/ledc.h"
+#include "driver/periph_ctrl.h"
 
 #ifdef PICOKIT
   #define THIS_DEVICE_NAME "picokit"
@@ -15,11 +17,13 @@
 #endif
 
 
-#define LOOP_WAIT_TIME_MS 10
-#define WAIT_BEFORE_RESEND 2000
+#define LOOP_WAIT_TIME_MS 5
+#define WAIT_BEFORE_RESEND 100
 #define OWN_FREQ 1000
 #define OTHER_FREQ 500
 #define BOTH_FREQ 700
+
+#define PIN_KEY 12
 
 const char  g_partner_device_ack_str[]=PARTNER_DEVICE_ACK_STR;
 const char partner_device_name[]=PARTNER_DEVICE_NAME;
@@ -86,7 +90,74 @@ char * sender_name=THIS_DEVICE_NAME;
 //WiFiUDP udp;
 
 
+void play_tone(uint16_t freq)
+{
+    /*periph_module_enable(PERIPH_LEDC_MODULE);
+
+    // Set up timer
+    ledc_timer_config_t ledc_timer;
+    ledc_timer.duty_resolution=LEDC_TIMER_1_BIT;
+    ledc_timer.freq_hz=freq;
+    ledc_timer.speed_mode=LEDC_HIGH_SPEED_MODE;
+    ledc_timer.timer_num=LEDC_TIMER_0;
+
+
+    
+
+
+
+
+
+    /*
+     = {
+       .duty_resolution = LEDC_TIMER_1_BIT,     // We need clock, not PWM so 1 bit is enough.
+       .freq_hz = freq,                      // Clock frequency, 1 MHz
+       .speed_mode = LEDC_HIGH_SPEED_MODE,
+       .timer_num = LEDC_TIMER_0,
+        // .clk_cfg = LEDC_USE_APB_CLK          // I think this is needed for neweer espressif software, if problem, try uncommenting this line
+    };
+    */
+   /*
+    ledc_timer_config(&ledc_timer);
+
+    // Set up GPIO PIN
+    ledc_channel_config_t channel_config;
+    channel_config.channel    = LEDC_CHANNEL_0;
+    channel_config.duty       = 1;
+    channel_config.gpio_num   = 2;                   // GPIO pin
+    channel_config.speed_mode = LEDC_HIGH_SPEED_MODE;
+    channel_config.timer_sel  = LEDC_TIMER_0;
+    
+    
+    
+    /* = {
+        .channel    = LEDC_CHANNEL_0,
+        .duty       = 1,
+        .gpio_num   = 2,                        // GPIO pin
+        .speed_mode = LEDC_HIGH_SPEED_MODE,
+        .timer_sel  = LEDC_TIMER_0
+    };*/
+
+    /*
+    ledc_channel_config(&channel_config);
+    */
+
+    ledcSetup(0, freq, 1);
+    
+    // attach the channel to the GPIO to be controlled
+    ledcAttachPin(2, 0);
+
+    ledcWrite(0, (freq>0)?1:0);
+
+}
+
+
 bool get_key_down()
+{
+  return !digitalRead(PIN_KEY);
+}
+
+bool serial_get_key_down()
 {
   char ser_rx_buff[6];
   uint8_t size=Serial.read(ser_rx_buff,1);
@@ -124,6 +195,9 @@ void set_speaker()
 
   if (freq==g_state.current_speaker_frequency) return;
   Serial.printf("\t\tSPEAKER SET TO : %d\n",freq);
+  play_tone(freq);
+  g_state.current_speaker_frequency=freq;
+  
 }
 
 
@@ -185,7 +259,7 @@ void receive()
   // We do have a new state, so we record it
   g_state.received_state=(g_state.rx_buffer[strlen(g_state.rx_buffer)-1]=='1');
   Serial.printf(">>>>>>>    -------   %s\n",g_state.received_state?"1":"0");
-
+  set_speaker();
   // Now send the ack back...
   // IPAddress ip_address=udp.remoteIP(); // We need this for ack'ing
   // uint16_t remote_port=udp.remotePort();
@@ -209,7 +283,7 @@ void transmit(bool new_state)
   sprintf(msg_id_str,"%03d",message_id);// Shound have leading zeros if required
 
   
-  sprintf(g_state.tx_buffer,"%s %d %s",sender_name,message_id,new_state?"1":"0");
+  sprintf(g_state.tx_buffer,"%s %s %s",sender_name,msg_id_str,new_state?"1":"0");
   Serial.printf("About to send: %s\n",g_state.tx_buffer);
   
 
@@ -303,6 +377,7 @@ void setup(){
   WiFi.begin(ssid, password);
   Serial.println("");
   delay(1000);
+  pinMode(PIN_KEY,INPUT_PULLUP);
 
   // Wait for connection
   uint16_t try_count=0;
@@ -331,6 +406,7 @@ void setup(){
   memset(g_state.rx_buffer,0,sizeof(g_state.rx_buffer));
   memset(g_state.tx_buffer,0,sizeof(g_state.tx_buffer));
   g_state.current_speaker_frequency=0;
+  set_speaker();
 
   // Set up async handler for rx
   if(audp.listen(udpPort)) {
@@ -357,6 +433,7 @@ void setup(){
 void loop()
 {
   g_state.key_down=get_key_down();
+  set_speaker();
   //receive(); // Tries to rx- could be an ack, a state change, or nothing- non-blocking
             // results go into g_state
   
@@ -420,32 +497,7 @@ void old_loop()
 */
 
 /*
-#include "driver/ledc.h"
-#include "driver/periph_ctrl.h"
 
 
-void set_1MHz_clock_on_GPIO2(void)
-{
-    periph_module_enable(PERIPH_LEDC_MODULE);
 
-    // Set up timer
-    ledc_timer_config_t ledc_timer = {
-       .duty_resolution = LEDC_TIMER_1_BIT,     // We need clock, not PWM so 1 bit is enough.
-       .freq_hz = 1000000,                      // Clock frequency, 1 MHz
-       .speed_mode = LEDC_HIGH_SPEED_MODE,
-       .timer_num = LEDC_TIMER_0,
-        // .clk_cfg = LEDC_USE_APB_CLK          // I think this is needed for neweer espressif software, if problem, try uncommenting this line
-    };
-    ledc_timer_config(&ledc_timer);
-
-    // Set up GPIO PIN
-    ledc_channel_config_t channel_config = {
-        .channel    = LEDC_CHANNEL_0,
-        .duty       = 1,
-        .gpio_num   = 2,                        // GPIO pin
-        .speed_mode = LEDC_HIGH_SPEED_MODE,
-        .timer_sel  = LEDC_TIMER_0
-    };
-    ledc_channel_config(&channel_config);
-}
 */
