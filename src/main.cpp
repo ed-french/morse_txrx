@@ -17,12 +17,12 @@
 #endif
 
 
-#define LOOP_WAIT_TIME_MS 5
+#define LOOP_WAIT_TIME_MS 50
 #define WAIT_BEFORE_RESEND 100
 #define OWN_FREQ 1000
 #define OTHER_FREQ 500
 #define BOTH_FREQ 700
-
+#define ACKS_AWAITED_SIZE_WORDS 64
 #define PIN_KEY 12
 
 const char  g_partner_device_ack_str[]=PARTNER_DEVICE_ACK_STR;
@@ -32,15 +32,17 @@ const char this_device_name[]=THIS_DEVICE_NAME;
 
 struct g_state_t
 {
-  char waiting_for_ack_id[4];// This is the last sent message we are currently awaiting a reply on
+  //char waiting_for_ack_id[4];// This is the last sent message we are currently awaiting a reply on
   bool last_sent; // true is key down
   bool received_state; // true means the other device has key down
   bool ack_rxd; // true once the last message ack is rx'd
   uint32_t last_sent_time; // millis() when the last send was tried
   uint16_t current_speaker_frequency;
   bool key_down;
-  char rx_buffer[50];
-  char tx_buffer[50];
+  char acks_awaited[4*ACKS_AWAITED_SIZE_WORDS]; //4 per awaited, up-to 16 awaited
+  uint8_t next_ack_index;
+  char rx_buffer[64];
+  char tx_buffer[64];
 };
 
 g_state_t g_state; // Holds the global state
@@ -154,7 +156,9 @@ void play_tone(uint16_t freq)
 
 bool get_key_down()
 {
-  return !digitalRead(PIN_KEY);
+  g_state.key_down=!digitalRead(PIN_KEY);
+  Serial.printf("%s",g_state.key_down?"X":".");
+  return g_state.key_down;
 }
 
 bool serial_get_key_down()
@@ -222,11 +226,22 @@ void receive()
   // test for ack from partner
   if (strcmp(g_state.rx_buffer+3,g_partner_device_ack_str)==0)
   {
+    Serial.println("Ignoring ack");
+    return;
     // is the message_id the one we are waiting for
     Serial.println("ack received from partner...");
-    if (!strncmp(g_state.rx_buffer,g_state.waiting_for_ack_id,3)==0)
+    bool found=false;
+    for (uint8_t i=0;i<ACKS_AWAITED_SIZE_WORDS;i++)
     {
-      Serial.printf("\t\t\t\tNot the ack we were waiting for (%s)\n",g_state.waiting_for_ack_id);
+      if (strncmp(g_state.rx_buffer,g_state.acks_awaited+4*i,3)==0)
+      {
+        found=true;
+        break;
+      }
+    }
+    if (!found)
+    {
+      Serial.printf("\t\t\t\tNot an ack we were awaiting");
       return;
     }
     // It is the ack we were waiting for!
@@ -269,7 +284,7 @@ void receive()
   // udp.print(g_state.tx_buffer);
   
   // udp.endPacket();
-  audp.broadcast(g_state.tx_buffer);
+  // audp.broadcast(g_state.tx_buffer);
 
 }
 
@@ -281,6 +296,10 @@ void transmit(bool new_state)
   uint32_t message_id=random(999); // pick a random message id to track correct ack
   char msg_id_str[4];
   sprintf(msg_id_str,"%03d",message_id);// Shound have leading zeros if required
+
+  // Add to acks awaited array
+  memcpy(g_state.acks_awaited+4*g_state.next_ack_index,msg_id_str,3);
+  g_state.next_ack_index=(g_state.next_ack_index+1)&(ACKS_AWAITED_SIZE_WORDS-1); // wrap round
 
   
   sprintf(g_state.tx_buffer,"%s %s %s",sender_name,msg_id_str,new_state?"1":"0");
@@ -296,8 +315,8 @@ void transmit(bool new_state)
   g_state.ack_rxd=false;
   g_state.last_sent_time=millis();
   g_state.last_sent=new_state;
-  strncpy(g_state.waiting_for_ack_id,msg_id_str,3);
-  Serial.printf("Now waiting for : %s\n",g_state.waiting_for_ack_id);
+  //strncpy(g_state.waiting_for_ack_id,msg_id_str,3);
+  //Serial.printf("Now waiting for : %s\n",g_state.waiting_for_ack_id);
 
 }
 /*
@@ -369,12 +388,15 @@ void old_loop()
 
 void setup(){
   Serial.begin(115200);
+  WiFi.setSleep(false);
   WiFi.mode(WIFI_STA);
+  
   Serial.println();
   Serial.print("Connecting to ");
   Serial.println(ssid);
   //Connect to the WiFi network
   WiFi.begin(ssid, password);
+  WiFi.setSleep(false);
   Serial.println("");
   delay(1000);
   pinMode(PIN_KEY,INPUT_PULLUP);
@@ -402,10 +424,12 @@ void setup(){
   g_state.last_sent=false;
   g_state.last_sent_time=0;
   g_state.received_state=false;
-  memset(g_state.waiting_for_ack_id,0,4);
+  //memset(g_state.waiting_for_ack_id,0,4);
   memset(g_state.rx_buffer,0,sizeof(g_state.rx_buffer));
   memset(g_state.tx_buffer,0,sizeof(g_state.tx_buffer));
   g_state.current_speaker_frequency=0;
+  memset(g_state.acks_awaited,0,sizeof(g_state.acks_awaited));
+  g_state.next_ack_index=0;
   set_speaker();
 
   // Set up async handler for rx
@@ -432,16 +456,30 @@ void setup(){
 
 void loop()
 {
+  // while(true)
+  // {
+  //   g_state.key_down=get_key_down();
+  //   delay(200);
+  // }
+
   g_state.key_down=get_key_down();
   set_speaker();
+  transmit(g_state.key_down);
   //receive(); // Tries to rx- could be an ack, a state change, or nothing- non-blocking
             // results go into g_state
   
-  uint32_t time_since_last_send=millis()-g_state.last_sent_time;
-  if (g_state.key_down!=g_state.last_sent || (!g_state.ack_rxd && time_since_last_send>WAIT_BEFORE_RESEND))
-  {
-    transmit(g_state.key_down);
-  }
+  // uint32_t time_since_last_send=millis()-g_state.last_sent_time;
+  // if (g_state.key_down!=g_state.last_sent || ((!g_state.ack_rxd) && time_since_last_send>WAIT_BEFORE_RESEND))
+  // {
+  //   if (g_state.key_down!=g_state.last_sent)
+  //   {
+  //     // First time we need to re-zero the awaited acks array
+  //     Serial.println("key change!");
+  //     memset(g_state.acks_awaited,0,sizeof(g_state.acks_awaited));
+  //     g_state.next_ack_index=0;
+  //   }
+  //   transmit(g_state.key_down);
+  // }
   delay(LOOP_WAIT_TIME_MS);
 
 
