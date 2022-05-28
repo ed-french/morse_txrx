@@ -17,7 +17,7 @@
 #endif
 
 
-#define LOOP_WAIT_TIME_MS 50
+#define LOOP_WAIT_TIME_MS 1
 #define WAIT_BEFORE_RESEND 100
 #define OWN_FREQ 1000
 #define OTHER_FREQ 500
@@ -41,6 +41,7 @@ struct g_state_t
   bool key_down;
   char acks_awaited[4*ACKS_AWAITED_SIZE_WORDS]; //4 per awaited, up-to 16 awaited
   uint8_t next_ack_index;
+  uint32_t last_keydown_time;
   char rx_buffer[64];
   char tx_buffer[64];
 };
@@ -157,7 +158,7 @@ void play_tone(uint16_t freq)
 bool get_key_down()
 {
   g_state.key_down=!digitalRead(PIN_KEY);
-  Serial.printf("%s",g_state.key_down?"X":".");
+  //Serial.printf("%s",g_state.key_down?"X":".");
   return g_state.key_down;
 }
 
@@ -303,7 +304,7 @@ void transmit(bool new_state)
 
   
   sprintf(g_state.tx_buffer,"%s %s %s",sender_name,msg_id_str,new_state?"1":"0");
-  Serial.printf("About to send: %s\n",g_state.tx_buffer);
+  Serial.printf(">>>>: %s\n",g_state.tx_buffer);
   
 
   // udp.beginPacket(udpAddress, udpPort);
@@ -386,7 +387,8 @@ void old_loop()
 
 
 
-void setup(){
+void setup()
+{
   Serial.begin(115200);
   WiFi.setSleep(false);
   WiFi.mode(WIFI_STA);
@@ -435,11 +437,11 @@ void setup(){
   // Set up async handler for rx
   if(audp.listen(udpPort)) {
         audp.onPacket([](AsyncUDPPacket packet) {
-          Serial.printf("Received %d bytes of data: ",packet.length());
-            Serial.write(packet.data(), packet.length());
+            //Serial.printf("Received %d bytes of data: ",packet.length());
+            // Serial.write(packet.data(), packet.length());
             memcpy(g_state.rx_buffer,(char *)packet.data(),packet.length());
             g_state.rx_buffer[packet.length()]=(char)0;
-            Serial.printf("\t\t\t\t\t\trxstr: %s\n",g_state.rx_buffer);
+            //Serial.printf("\t\t\t\t\t\trxstr: %s\n",g_state.rx_buffer);
             if (packet.length()>0)
             { 
               receive();// Process the buffer!
@@ -462,9 +464,38 @@ void loop()
   //   delay(200);
   // }
 
-  g_state.key_down=get_key_down();
-  set_speaker();
+  // Wait for key down
+  while (!g_state.key_down)
+  {
+    g_state.key_down=get_key_down();
+  }
   transmit(g_state.key_down);
+  delay(10);
+  transmit(g_state.key_down);
+  delay(10);
+  transmit(g_state.key_down);
+  delay(50);
+
+  while(g_state.key_down)
+  {
+    g_state.key_down=get_key_down();
+  }
+  transmit(g_state.key_down);
+  delay(10);
+  transmit(g_state.key_down);
+  delay(10);
+  transmit(g_state.key_down);
+  delay(50);
+
+  
+  // if (g_state.key_down) g_state.last_keydown_time=millis();
+  // set_speaker();
+  // if ((millis()-g_state.last_keydown_time)<5000)
+  // {
+  //   transmit(g_state.key_down);
+  // } else {
+  //   Serial.print("~");
+  // }
   //receive(); // Tries to rx- could be an ack, a state change, or nothing- non-blocking
             // results go into g_state
   
