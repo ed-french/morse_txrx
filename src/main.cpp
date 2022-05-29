@@ -2,7 +2,7 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include "credentials.h"
-#include <AsyncUDP.h>
+//#include <AsyncUDP.h>
 #include "driver/ledc.h"
 #include "driver/periph_ctrl.h"
 
@@ -29,6 +29,7 @@ const char  g_partner_device_ack_str[]=PARTNER_DEVICE_ACK_STR;
 const char partner_device_name[]=PARTNER_DEVICE_NAME;
 const char this_device_name[]=THIS_DEVICE_NAME;
 
+WiFiUDP udp;
 
 struct g_state_t
 {
@@ -47,7 +48,7 @@ struct g_state_t
 };
 
 g_state_t g_state; // Holds the global state
-AsyncUDP audp;
+//AsyncUDP audp;
 
 
 
@@ -84,9 +85,10 @@ AsyncUDP audp;
 
 
 
-const char * udpAddress = "224.3.29.71";
+//const char * udpAddress = "224.3.29.71";
+const char * udpAddress = "255.255.255.255";
 const uint8_t udp_addr_bytes[4]={71,29,3,224};
-const int udpPort = 10000;
+const int udp_broadcast_port = 10000;
 char * sender_name=THIS_DEVICE_NAME;
 
 //create tx UDP instance
@@ -306,12 +308,16 @@ void transmit(bool new_state)
   sprintf(g_state.tx_buffer,"%s %s %s",sender_name,msg_id_str,new_state?"1":"0");
   Serial.printf(">>>>: %s\n",g_state.tx_buffer);
   
+  // Using sync version...
+  
+  udp.beginPacket(udpAddress,udp_broadcast_port);
+  udp.print(g_state.tx_buffer);
 
-  // udp.beginPacket(udpAddress, udpPort);
-  // udp.print(g_state.tx_buffer);
+  udp.endPacket();
 
-  // udp.endPacket();
-  audp.broadcast(g_state.tx_buffer);
+
+  //async verison
+  //audp.broadcast(g_state.tx_buffer);
 
   g_state.ack_rxd=false;
   g_state.last_sent_time=millis();
@@ -320,6 +326,41 @@ void transmit(bool new_state)
   //Serial.printf("Now waiting for : %s\n",g_state.waiting_for_ack_id);
 
 }
+
+
+// Sync receive
+void receive_sync(uint32_t max_wait_time_ms)
+{
+  uint32_t endtime=millis()+max_wait_time_ms;
+  
+  while (millis()<endtime)
+  {
+    udp.parsePacket();
+    if(udp.read(g_state.rx_buffer, sizeof(g_state.rx_buffer)) > 0)
+    {
+      Serial.printf("\t\t\t\tRx: %s\n",g_state.rx_buffer);
+      if (strncmp(g_state.rx_buffer,partner_device_name,strlen(partner_device_name))!=0)
+      {
+        // No match, so we ignore it
+        Serial.println("\t\t\t\tIgnoring as not from partner");
+      } else {
+        g_state.received_state=(g_state.rx_buffer[strlen(g_state.rx_buffer)-1]=='1');
+        Serial.printf(">>>>>>>    -------   %s\n",g_state.received_state?"1":"0");
+        
+        
+        // PLAY THE INBOUND SOUND GOES HERE!
+        
+        set_speaker();
+
+      }
+
+
+    }
+
+  }
+}
+
+
 /*
 bool try_send_state(bool new_state)
 {
@@ -432,26 +473,31 @@ void setup()
   g_state.current_speaker_frequency=0;
   memset(g_state.acks_awaited,0,sizeof(g_state.acks_awaited));
   g_state.next_ack_index=0;
+
+
   set_speaker();
 
-  // Set up async handler for rx
-  if(audp.listen(udpPort)) {
-        audp.onPacket([](AsyncUDPPacket packet) {
-            //Serial.printf("Received %d bytes of data: ",packet.length());
-            // Serial.write(packet.data(), packet.length());
-            memcpy(g_state.rx_buffer,(char *)packet.data(),packet.length());
-            g_state.rx_buffer[packet.length()]=(char)0;
-            //Serial.printf("\t\t\t\t\t\trxstr: %s\n",g_state.rx_buffer);
-            if (packet.length()>0)
-            { 
-              receive();// Process the buffer!
-            }
-        });
-    } else {
-      Serial.println("\n\nFailed to set up async udp!!!\n\n");
-      delay(2000);
-      ESP.restart();
-    }
+
+  udp.begin(udp_broadcast_port);
+
+  // // Set up async handler for rx
+  // if(audp.listen(udpPort)) {
+  //       audp.onPacket([](AsyncUDPPacket packet) {
+  //           //Serial.printf("Received %d bytes of data: ",packet.length());
+  //           // Serial.write(packet.data(), packet.length());
+  //           memcpy(g_state.rx_buffer,(char *)packet.data(),packet.length());
+  //           g_state.rx_buffer[packet.length()]=(char)0;
+  //           //Serial.printf("\t\t\t\t\t\trxstr: %s\n",g_state.rx_buffer);
+  //           if (packet.length()>0)
+  //           { 
+  //             receive();// Process the buffer!
+  //           }
+  //       });
+  //   } else {
+  //     Serial.println("\n\nFailed to set up async udp!!!\n\n");
+  //     delay(2000);
+  //     ESP.restart();
+  //   }
 }
 
 
@@ -468,24 +514,28 @@ void loop()
   while (!g_state.key_down)
   {
     g_state.key_down=get_key_down();
+    receive_sync(10);
   }
   transmit(g_state.key_down);
-  delay(10);
+  set_speaker();
+  receive_sync(10);
   transmit(g_state.key_down);
-  delay(10);
+  receive_sync(10);
   transmit(g_state.key_down);
-  delay(50);
+  receive_sync(50);
 
   while(g_state.key_down)
   {
     g_state.key_down=get_key_down();
+    receive_sync(10);
   }
   transmit(g_state.key_down);
-  delay(10);
+  set_speaker();
+  receive_sync(10);
   transmit(g_state.key_down);
-  delay(10);
+  receive_sync(10);
   transmit(g_state.key_down);
-  delay(50);
+  receive_sync(50);
 
   
   // if (g_state.key_down) g_state.last_keydown_time=millis();
@@ -511,7 +561,7 @@ void loop()
   //   }
   //   transmit(g_state.key_down);
   // }
-  delay(LOOP_WAIT_TIME_MS);
+  receive_sync(LOOP_WAIT_TIME_MS);
 
 
 
