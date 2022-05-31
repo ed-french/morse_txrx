@@ -1,8 +1,20 @@
+
+#define USE_ESPNOW // Instead of wifi
+
+
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WiFiUdp.h>
-#include "credentials.h"
-//#include <AsyncUDP.h>
+
+#ifdef USE_ESPNOW
+  #include <esp_now.h>
+  #define WIFI_CHANNEL 0
+#elif
+  
+  #include <WiFiUdp.h>
+  #include "credentials.h"
+#endif
+
+
 #include "driver/ledc.h"
 #include "driver/periph_ctrl.h"
 
@@ -19,6 +31,8 @@
 #endif
 
 
+
+
 #define LOOP_WAIT_TIME_MS 1
 #define WAIT_BEFORE_RESEND 100
 #define OWN_FREQ 523
@@ -28,11 +42,18 @@
 #define PIN_KEY 12
 #define PIN_SPEAKER 13
 
+#ifdef USE_ESPNOW
+  esp_now_peer_info_t peerInfo;
+  uint8_t broadcast_addr[]={0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+#else
+  WiFiUDP udp;
+#endif
+
 const char  g_partner_device_ack_str[]=PARTNER_DEVICE_ACK_STR;
 const char partner_device_name[]=PARTNER_DEVICE_NAME;
 const char this_device_name[]=THIS_DEVICE_NAME;
 
-WiFiUDP udp;
+
 
 struct g_state_t
 {
@@ -51,7 +72,6 @@ struct g_state_t
 };
 
 g_state_t g_state; // Holds the global state
-//AsyncUDP audp;
 
 
 
@@ -94,8 +114,28 @@ const uint8_t udp_addr_bytes[4]={71,29,3,224};
 const int udp_broadcast_port = 10000;
 char * sender_name=THIS_DEVICE_NAME;
 
-//create tx UDP instance
-//WiFiUDP udp;
+
+#ifdef USE_ESPNOW
+void buff_print_mac(char * buffer,uint8_t * mac_addr)
+{
+  // Writes a nicely formatted mac address
+  sprintf(buffer,"%x:%x:%x:%x:%x:%x",mac_addr[0],mac_addr[1],mac_addr[2],mac_addr[3],mac_addr[4],mac_addr[5]);
+}
+
+void OnRecv(const uint8_t * mac, const uint8_t *incomingData, int len)
+{
+  // Just places received message into rx_buffer
+  strncpy(g_state.rx_buffer,(char *)incomingData,min(len,(int)sizeof(g_state.rx_buffer)-1));
+  Serial.print("Rx from mac:");
+  char buff[40];
+  buff_print_mac(buff,(uint8_t*)mac);
+  Serial.printf(": %s\n",g_state.rx_buffer);
+
+}
+
+#endif
+
+
 
 
 void play_tone(uint16_t freq)
@@ -186,14 +226,41 @@ void transmit(bool new_state)
   
   sprintf(g_state.tx_buffer,"%s %s %s",sender_name,msg_id_str,new_state?"1":"0");
   Serial.printf(">>>>: %s\n",g_state.tx_buffer);
-  
-  // Using sync version...
-  
-  udp.beginPacket(udpAddress,udp_broadcast_port);
-  udp.print(g_state.tx_buffer);
 
-  udp.endPacket();
 
+  #ifdef USE_ESPNOW
+    // Send via espnow
+
+    peerInfo.channel=WIFI_CHANNEL;
+    peerInfo.encrypt=false;
+    memcpy(peerInfo.peer_addr,broadcast_addr,6);
+    esp_err_t peer_add_error=esp_now_add_peer(&peerInfo)-ESP_ERR_ESPNOW_BASE;
+    if (peer_add_error != ESP_OK)
+    {
+      Serial.printf("Failed to add peer: %d\n",peer_add_error);
+      
+
+      //return;
+    }
+
+
+    // Was sent to pair_address, now it's broadcast
+    esp_err_t result=esp_now_send(broadcast_addr,
+                              (uint8_t *) g_state.tx_buffer,
+                              strlen(g_state.tx_buffer)+1);
+    if (result == ESP_OK) {
+      Serial.println("Sent with success");
+    } else {
+      Serial.printf("Error sending the data: %s\n",esp_err_to_name(result));
+    }
+
+  #else
+    
+      // Send via UDP broadcast  
+      udp.beginPacket(udpAddress,udp_broadcast_port);
+      udp.print(g_state.tx_buffer);
+      udp.endPacket();
+  #endif
 
   //async verison
   //audp.broadcast(g_state.tx_buffer);
@@ -214,8 +281,13 @@ void receive_sync(uint32_t max_wait_time_ms)
   
   while (millis()<endtime)
   {
+    #ifdef USE_ESPNOW
+    int8_t readcount=strnlen(g_state.rx_buffer,sizeof(g_state.rx_buffer));
+    #else
     udp.parsePacket();
-    if(udp.read(g_state.rx_buffer, sizeof(g_state.rx_buffer)) > 0)
+    uint8_t readcount=udp.read(g_state.rx_buffer, sizeof(g_state.rx_buffer));
+    #endif
+    if (readcount > 0)
     {
       Serial.printf("\t\t\t\tRx: %s\n",g_state.rx_buffer);
       if (strncmp(g_state.rx_buffer,partner_device_name,strlen(partner_device_name))!=0)
@@ -232,6 +304,8 @@ void receive_sync(uint32_t max_wait_time_ms)
         set_speaker();
 
       }
+      //Zero the buffer again
+      memset(g_state.rx_buffer,0,sizeof(g_state.rx_buffer));
 
 
     }
@@ -246,35 +320,50 @@ void setup()
   Serial.begin(115200);
   WiFi.setSleep(false);
   WiFi.mode(WIFI_STA);
+  pinMode(PIN_KEY,INPUT_PULLUP);
   
   Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-  //Connect to the WiFi network
-  WiFi.setHostname(NETWORK_NAME);
-  WiFi.begin(ssid, password);
-  WiFi.setSleep(false);
-  Serial.println("");
-  //delay(1000);
-  pinMode(PIN_KEY,INPUT_PULLUP);
 
-  // Wait for connection
-  uint16_t try_count=0;
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(300);
-    play_beep(392,100);
-    try_count++;
-    Serial.print(".");
-    if (try_count>50)
+  #ifdef USE_ESPNOW
+    if (esp_now_init() != ESP_OK)
     {
+      Serial.println("\n\nError initializing ESP-NOW");
+      delay(4000);
       ESP.restart();
     }
-  }
-  Serial.println("");
-  Serial.print("Connected to ");
-  Serial.println(ssid);
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+    esp_now_register_recv_cb(OnRecv);
+
+  #else
+    Serial.print("Connecting to ");
+    Serial.println(ssid);
+    //Connect to the WiFi network
+    WiFi.setHostname(NETWORK_NAME);
+    WiFi.begin(ssid, password);
+    WiFi.setSleep(false);
+    Serial.println("");
+
+    // Wait for connection
+    uint16_t try_count=0;
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(300);
+      play_beep(392,100);
+      try_count++;
+      Serial.print(".");
+      if (try_count>50)
+      {
+        ESP.restart();
+      }
+    }
+    Serial.println("");
+    Serial.print("Connected to ");
+    Serial.println(ssid);
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+
+    udp.begin(udp_broadcast_port);
+  #endif
+
+
   play_beep(440,450);
   play_beep(523,300);
   play_beep(740,150);
@@ -295,7 +384,7 @@ void setup()
   set_speaker();
 
 
-  udp.begin(udp_broadcast_port);
+  
 
 }
 
