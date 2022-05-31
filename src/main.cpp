@@ -100,55 +100,7 @@ char * sender_name=THIS_DEVICE_NAME;
 
 void play_tone(uint16_t freq)
 {
-    /*periph_module_enable(PERIPH_LEDC_MODULE);
 
-    // Set up timer
-    ledc_timer_config_t ledc_timer;
-    ledc_timer.duty_resolution=LEDC_TIMER_1_BIT;
-    ledc_timer.freq_hz=freq;
-    ledc_timer.speed_mode=LEDC_HIGH_SPEED_MODE;
-    ledc_timer.timer_num=LEDC_TIMER_0;
-
-
-    
-
-
-
-
-
-    /*
-     = {
-       .duty_resolution = LEDC_TIMER_1_BIT,     // We need clock, not PWM so 1 bit is enough.
-       .freq_hz = freq,                      // Clock frequency, 1 MHz
-       .speed_mode = LEDC_HIGH_SPEED_MODE,
-       .timer_num = LEDC_TIMER_0,
-        // .clk_cfg = LEDC_USE_APB_CLK          // I think this is needed for neweer espressif software, if problem, try uncommenting this line
-    };
-    */
-   /*
-    ledc_timer_config(&ledc_timer);
-
-    // Set up GPIO PIN
-    ledc_channel_config_t channel_config;
-    channel_config.channel    = LEDC_CHANNEL_0;
-    channel_config.duty       = 1;
-    channel_config.gpio_num   = 2;                   // GPIO pin
-    channel_config.speed_mode = LEDC_HIGH_SPEED_MODE;
-    channel_config.timer_sel  = LEDC_TIMER_0;
-    
-    
-    
-    /* = {
-        .channel    = LEDC_CHANNEL_0,
-        .duty       = 1,
-        .gpio_num   = 2,                        // GPIO pin
-        .speed_mode = LEDC_HIGH_SPEED_MODE,
-        .timer_sel  = LEDC_TIMER_0
-    };*/
-
-    /*
-    ledc_channel_config(&channel_config);
-    */
 
     ledcSetup(0, freq, 1);
     
@@ -217,88 +169,6 @@ void play_beep(uint16_t freq, uint16_t duration_ms)
   play_tone(0);
 }
 
-void receive()
-{
-  //memset(g_state.rx_buffer,0,sizeof(g_state.rx_buffer)); // Clear the buffer
-  //udp.beginMulticast(IPAddress(udp_addr_bytes[0],udp_addr_bytes[1],udp_addr_bytes[2],//udp_addr_bytes[3]),udpPort);
-  //udp.begin(udpPort);
-  //udp.parsePacket();
-  // if(udp.read(g_state.rx_buffer, 50) == 0)
-  // {
-  //   return; // Nothing rxd
-  // }
-  
-  Serial.printf("\t\t\trx: %s\n",g_state.rx_buffer);
-  // Three possibilities:
-  //     we have recieved an ack from another device- e.g. server
-  //     we have received an ack from the partner device
-  //     we have received a new remote state
-  //     we have received a corrupt/random packet
-  
-  // test for ack from partner
-  if (strcmp(g_state.rx_buffer+3,g_partner_device_ack_str)==0)
-  {
-    Serial.println("Ignoring ack");
-    return;
-    // is the message_id the one we are waiting for
-    Serial.println("ack received from partner...");
-    bool found=false;
-    for (uint8_t i=0;i<ACKS_AWAITED_SIZE_WORDS;i++)
-    {
-      if (strncmp(g_state.rx_buffer,g_state.acks_awaited+4*i,3)==0)
-      {
-        found=true;
-        break;
-      }
-    }
-    if (!found)
-    {
-      Serial.printf("\t\t\t\tNot an ack we were awaiting");
-      return;
-    }
-    // It is the ack we were waiting for!
-    Serial.println("\t\t\t\tsuccessful ack rx");
-    g_state.ack_rxd=true;
-    return;
-  }
-
-  // test if we have a new state from the partner keydown
-  // e.g. picokit 712 1
-  if (strncmp(g_state.rx_buffer,partner_device_name,strlen(partner_device_name))!=0)
-  {
-    // No match, so we ignore it
-    Serial.printf("\t\t\t\tIgnoring as not from partner (%s)\n",partner_device_name);
-    return;
-  }
-  // Get the message_id
-  char message_id_str[4];
-  uint8_t rx_len=strnlen(g_state.rx_buffer,sizeof(g_state.rx_buffer)-1);
-  memcpy(message_id_str,g_state.rx_buffer+rx_len-5,3);
-  message_id_str[3]=(char)0;
-  //Serial.printf("\t\t\t\t\tmessage_id_str: %s\n",message_id_str);
-  //Serial.printf("\t\t\t\t\tthis_device_name: %s\n",this_device_name);
-  //delay(500); // Pause to let the serial buffer send before it resets!
-  // make the ack
-  sprintf(g_state.tx_buffer,"%s ack %s",message_id_str,this_device_name);
-
-
-
-  // We do have a new state, so we record it
-  g_state.received_state=(g_state.rx_buffer[strlen(g_state.rx_buffer)-1]=='1');
-  Serial.printf(">>>>>>>    -------   %s\n",g_state.received_state?"1":"0");
-  set_speaker();
-  // Now send the ack back...
-  // IPAddress ip_address=udp.remoteIP(); // We need this for ack'ing
-  // uint16_t remote_port=udp.remotePort();
-
-  
-  // udp.beginPacket(udpAddress, udpPort);
-  // udp.print(g_state.tx_buffer);
-  
-  // udp.endPacket();
-  // audp.broadcast(g_state.tx_buffer);
-
-}
 
 
 
@@ -370,72 +240,6 @@ void receive_sync(uint32_t max_wait_time_ms)
 }
 
 
-/*
-bool try_send_state(bool new_state)
-{
-  
-  char buffer[50] = "\0";
-  char rx_buffer[50]="\0";
-  uint32_t message_id=random(999); // pick a random message id to track correct ack
-  char msg_id_str[4];
-  sprintf(msg_id_str,"%03d",message_id);// Shound have leading zeros if required
-
-  
-  sprintf(buffer,"%s %d %s",sender_name,message_id,new_state?"1":"0");
-  Serial.printf("About to send: %s\n",buffer);
-  
-  //This initializes udp and transfer buffer
-  udp.beginPacket(udpAddress, udpPort);
-  udp.print(buffer);
-  //udp.write(buffer, 11);
-  udp.endPacket();
-
-  
-
-  uint8_t try_count=6;
-
-  while (try_count>0)
-  {
-    //receive response from server
-    memset(buffer, 0, sizeof(buffer)); // Zero out the buffer for next time
-    delay(LOOP_WAIT_TIME_MS);
-    udp.parsePacket();
-    if(udp.read(rx_buffer, 50) > 0)
-    {
-      Serial.printf("\t\t\t\tReply # %d : %s\n",try_count,rx_buffer);
-      
-    }
-    
-    // check rx buffer is the ack we wanted...
-    // for now assume so if the message id is right
-
-    if (strncmp(rx_buffer,msg_id_str,strlen(msg_id_str))==0)
-    {
-      return true;
-    }
-    try_count--;
-  }
-  Serial.println("Ran out of tries for an ack!!!!!!");
-  
-  return false;
-
-}
-
-void old_loop()
-{
-  // Do 5 sends, then pause for a bit
-  bool state=false;
-  for (uint8_t i=0;i<5;i++)
-  {
-    bool ack_success=try_send_state(state);
-    Serial.printf("\t\t\t\t\t\t%s\n",ack_success?"success":"no-ack!!!!!!!!!!!!!!!!!");
-    delay(100);
-  }
-  delay(10000);
-}
-*/
-
-
 
 void setup()
 {
@@ -493,24 +297,6 @@ void setup()
 
   udp.begin(udp_broadcast_port);
 
-  // // Set up async handler for rx
-  // if(audp.listen(udpPort)) {
-  //       audp.onPacket([](AsyncUDPPacket packet) {
-  //           //Serial.printf("Received %d bytes of data: ",packet.length());
-  //           // Serial.write(packet.data(), packet.length());
-  //           memcpy(g_state.rx_buffer,(char *)packet.data(),packet.length());
-  //           g_state.rx_buffer[packet.length()]=(char)0;
-  //           //Serial.printf("\t\t\t\t\t\trxstr: %s\n",g_state.rx_buffer);
-  //           if (packet.length()>0)
-  //           { 
-  //             receive();// Process the buffer!
-  //           }
-  //       });
-  //   } else {
-  //     Serial.println("\n\nFailed to set up async udp!!!\n\n");
-  //     delay(2000);
-  //     ESP.restart();
-  //   }
 }
 
 
@@ -551,85 +337,9 @@ void loop()
   receive_sync(50);
 
   
-  // if (g_state.key_down) g_state.last_keydown_time=millis();
-  // set_speaker();
-  // if ((millis()-g_state.last_keydown_time)<5000)
-  // {
-  //   transmit(g_state.key_down);
-  // } else {
-  //   Serial.print("~");
-  // }
-  //receive(); // Tries to rx- could be an ack, a state change, or nothing- non-blocking
-            // results go into g_state
-  
-  // uint32_t time_since_last_send=millis()-g_state.last_sent_time;
-  // if (g_state.key_down!=g_state.last_sent || ((!g_state.ack_rxd) && time_since_last_send>WAIT_BEFORE_RESEND))
-  // {
-  //   if (g_state.key_down!=g_state.last_sent)
-  //   {
-  //     // First time we need to re-zero the awaited acks array
-  //     Serial.println("key change!");
-  //     memset(g_state.acks_awaited,0,sizeof(g_state.acks_awaited));
-  //     g_state.next_ack_index=0;
-  //   }
-  //   transmit(g_state.key_down);
-  // }
   receive_sync(LOOP_WAIT_TIME_MS);
 
 
 
 
 }
-
-/*
-void old_loop()
-{
-
-  uint32_t starttime=millis();
-  for (uint16_t i=0;i<100;i++)
-  {
-  //data will be sent to server
-  char buffer[50] = "\0";
-  sprintf(buffer,"esp->server: %d\n",message_count);
-  message_count++;
-
-
-  //This initializes udp and transfer buffer
-  udp.beginPacket(udpAddress, udpPort);
-  udp.print(buffer);
-  //udp.write(buffer, 11);
-  udp.endPacket();
-  memset(buffer, 0, sizeof(buffer));
-  //processing incoming packet, must be called before reading the buffer
-  udp.parsePacket();
-  //receive response from server,
-  if(udp.read(buffer, 50) > 0)
-  {
-    Serial.print("Server to client: ");
-    Serial.println((char *)buffer);
-  }
-  
-  delay(1);
-  }
-  float time_taken=(millis()-starttime)/1000.0;
-  printf("\nTook: %.3f seconds\n",time_taken);
-  delay(12000);
-}
-*/
-
-
-
-
-
-/*
- * Example: Generate 1 MHz clock signal with ESP32
-   note 24.3.2020/pekka
-   ESP32: LEDC peripheral can be used to generate clock signals between 40 MHz (half of APB clock) and approximately 0.001 Hz.
-   Please check the LEDC chapter in Technical Reference Manual. Example code below.
-*/
-
-/*
-
-
-
-*/
