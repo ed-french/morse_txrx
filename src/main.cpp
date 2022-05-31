@@ -6,24 +6,27 @@
 #include "driver/ledc.h"
 #include "driver/periph_ctrl.h"
 
-#ifdef PICOKIT
-  #define THIS_DEVICE_NAME "picokit"
-  #define PARTNER_DEVICE_NAME "lolin"
-  #define PARTNER_DEVICE_ACK_STR " ack lolin"
+#ifdef JOSEPHINE
+  #define THIS_DEVICE_NAME "josephine"
+  #define PARTNER_DEVICE_NAME "edward"
+  #define PARTNER_DEVICE_ACK_STR " ack edward"
+  #define NETWORK_NAME "josephine morse"
 #else
-  #define THIS_DEVICE_NAME "lolin"
-  #define PARTNER_DEVICE_NAME "picokit"
-  #define PARTNER_DEVICE_ACK_STR " ack picokit"
+  #define THIS_DEVICE_NAME "edward"
+  #define PARTNER_DEVICE_NAME "josephine"
+  #define PARTNER_DEVICE_ACK_STR " ack josephine"
+  #define NETWORK_NAME "edward morse"
 #endif
 
 
 #define LOOP_WAIT_TIME_MS 1
 #define WAIT_BEFORE_RESEND 100
-#define OWN_FREQ 1000
-#define OTHER_FREQ 500
-#define BOTH_FREQ 700
+#define OWN_FREQ 523
+#define OTHER_FREQ 440
+#define BOTH_FREQ 740
 #define ACKS_AWAITED_SIZE_WORDS 64
 #define PIN_KEY 12
+#define PIN_SPEAKER 13
 
 const char  g_partner_device_ack_str[]=PARTNER_DEVICE_ACK_STR;
 const char partner_device_name[]=PARTNER_DEVICE_NAME;
@@ -150,7 +153,7 @@ void play_tone(uint16_t freq)
     ledcSetup(0, freq, 1);
     
     // attach the channel to the GPIO to be controlled
-    ledcAttachPin(2, 0);
+    ledcAttachPin(PIN_SPEAKER, 0);
 
     ledcWrite(0, (freq>0)?1:0);
 
@@ -207,6 +210,12 @@ void set_speaker()
   
 }
 
+void play_beep(uint16_t freq, uint16_t duration_ms)
+{
+  play_tone(freq);
+  delay(duration_ms);
+  play_tone(0);
+}
 
 void receive()
 {
@@ -258,7 +267,7 @@ void receive()
   if (strncmp(g_state.rx_buffer,partner_device_name,strlen(partner_device_name))!=0)
   {
     // No match, so we ignore it
-    Serial.println("\t\t\t\tIgnoring as not from partner");
+    Serial.printf("\t\t\t\tIgnoring as not from partner (%s)\n",partner_device_name);
     return;
   }
   // Get the message_id
@@ -438,16 +447,18 @@ void setup()
   Serial.print("Connecting to ");
   Serial.println(ssid);
   //Connect to the WiFi network
+  WiFi.setHostname(NETWORK_NAME);
   WiFi.begin(ssid, password);
   WiFi.setSleep(false);
   Serial.println("");
-  delay(1000);
+  //delay(1000);
   pinMode(PIN_KEY,INPUT_PULLUP);
 
   // Wait for connection
   uint16_t try_count=0;
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    delay(300);
+    play_beep(392,100);
     try_count++;
     Serial.print(".");
     if (try_count>50)
@@ -460,7 +471,9 @@ void setup()
   Serial.println(ssid);
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
-
+  play_beep(440,450);
+  play_beep(523,300);
+  play_beep(740,150);
 
   // Reset global state
   g_state.ack_rxd=false;
