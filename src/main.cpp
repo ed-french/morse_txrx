@@ -7,6 +7,7 @@
 
 #ifdef USE_ESPNOW
   #include <esp_now.h>
+  #include <esp_wifi.h>
   #define WIFI_CHANNEL 0
 #elif
   
@@ -320,11 +321,14 @@ void setup()
   Serial.begin(115200);
   WiFi.setSleep(false);
   WiFi.mode(WIFI_STA);
+  
+  esp_wifi_set_protocol( WIFI_IF_AP, WIFI_PROTOCOL_LR );
   pinMode(PIN_KEY,INPUT_PULLUP);
   
   Serial.println();
 
   #ifdef USE_ESPNOW
+  
     if (esp_now_init() != ESP_OK)
     {
       Serial.println("\n\nError initializing ESP-NOW");
@@ -332,6 +336,7 @@ void setup()
       ESP.restart();
     }
     esp_now_register_recv_cb(OnRecv);
+    
 
   #else
     Serial.print("Connecting to ");
